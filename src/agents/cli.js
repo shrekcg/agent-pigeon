@@ -96,8 +96,10 @@ export class CliAdapter extends AgentAdapter {
 
   /** The working directory a run starts in: the session's own, else the configured default. */
   runCwd(link) {
-    const candidates = [link.cwd, this.options.workspace, path.join(paths.workspaces, this.id)];
-    for (const c of candidates) {
+    // A session's own folder is used only while it exists: a project folder that was moved
+    // or renamed must not come back empty. The resume still finds the session by its id.
+    if (link.cwd && fs.existsSync(link.cwd)) return link.cwd;
+    for (const c of [this.options.workspace, path.join(paths.workspaces, this.id)]) {
       if (!c) continue;
       try {
         fs.mkdirSync(c, { recursive: true });

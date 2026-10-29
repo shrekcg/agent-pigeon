@@ -122,6 +122,22 @@ final class Engine {
 
 // MARK: - Window
 
+/// A transparent strip over the top of the web view. WKWebView takes every mouse event in
+/// its frame, so the title bar area of a full-size-content window would not move the
+/// window; this view sits above it and hands drags (and double-clicks) to the window.
+final class DragStrip: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            // Honour the user's "double-click a window's title bar to…" setting.
+            let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
+            if action == "Minimize" { window?.miniaturize(nil) } else if action != "None" { window?.zoom(nil) }
+            return
+        }
+        window?.performDrag(with: event)
+    }
+}
+
 final class MainWindow: NSWindowController, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     private let webView: WKWebView
     private let placeholder = NSTextField(labelWithString: "正在启动引擎…")
@@ -153,9 +169,17 @@ final class MainWindow: NSWindowController, WKScriptMessageHandler, WKNavigation
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         placeholder.textColor = .secondaryLabelColor
         placeholder.alignment = .center
+        let strip = DragStrip()
+        strip.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(webView)
         container.addSubview(placeholder)
+        container.addSubview(strip, positioned: .above, relativeTo: webView)
         NSLayoutConstraint.activate([
+            // The title bar height; it leaves the traffic lights (drawn by the window) usable.
+            strip.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 78),
+            strip.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -170),
+            strip.topAnchor.constraint(equalTo: container.topAnchor),
+            strip.heightAnchor.constraint(equalToConstant: 28),
             webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             webView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -169,6 +193,7 @@ final class MainWindow: NSWindowController, WKScriptMessageHandler, WKNavigation
         window.delegate = self
         webView.navigationDelegate = self
         controller.add(self, name: "ap")
+        installDragMonitor()
         window.center()
     }
 
@@ -220,6 +245,22 @@ final class MainWindow: NSWindowController, WKScriptMessageHandler, WKNavigation
         decisionHandler(.allow)
     }
 
+    /// The page's own drag regions (sidebar top, page header) move the window too.
+    func dragFromWeb() {
+        guard let window, let event = lastMouseDown ?? NSApp.currentEvent else { return }
+        window.performDrag(with: event)
+    }
+
+    private var lastMouseDown: NSEvent?
+    private var monitor: Any?
+
+    func installDragMonitor() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
+            if e.window === self?.window { self?.lastMouseDown = e }
+            return e
+        }
+    }
+
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         if let body = message.body as? [String: Any] { onMessage?(body) }
     }
@@ -260,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         engine.onChange = { [weak self] state in self?.engineChanged(state) }
         engine.start()
+        if ProcessInfo.processInfo.environment["AP_DRAG_SELFTEST"] == "1" { dragSelfTest() }
 
         // First launch (or launched by hand rather than at login): show the window.
         // keyAELaunchedAsLogInOrResume ('lgit'): the open event says the login items started us.
@@ -277,6 +319,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) { engine.stop() }
+
+    /// `AP_DRAG_SELFTEST=1`: report which view the title bar area hits and whether the
+    /// window can be dragged from there, then quit (verifies the drag strip in CI-less builds).
+    func dragSelfTest() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
+            window.show(engine: engine.state, loginItem: loginItemEnabled)
+            guard let w = window.window, let content = w.contentView else { return }
+            let probes: [(String, NSPoint)] = [
+                ("title-mid", NSPoint(x: content.bounds.midX, y: content.bounds.maxY - 12)),
+                ("title-left", NSPoint(x: 120, y: content.bounds.maxY - 12)),
+                ("body", NSPoint(x: content.bounds.midX, y: content.bounds.midY)),
+            ]
+            for (name, p) in probes {
+                let hit = content.hitTest(p)
+                print("hit \(name): \(hit.map { String(describing: type(of: $0)) } ?? "nil") canMove=\(hit?.mouseDownCanMoveWindow ?? false)")
+            }
+            let before = w.frame.origin
+            w.setFrameOrigin(NSPoint(x: before.x + 40, y: before.y - 30))
+            print("frame moves programmatically:", w.frame.origin != before)
+            fflush(stdout)
+            NSApp.terminate(nil)
+        }
+    }
 
     private var loginItemEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
@@ -302,6 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch msg["action"] as? String {
         case "loginItem": setLoginItem((msg["value"] as? Bool) ?? !loginItemEnabled)
         case "reveal": NSWorkspace.shared.activateFileViewerSelecting([engine.dataDir])
+        case "drag": window.dragFromWeb()
         default: break
         }
     }

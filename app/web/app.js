@@ -341,6 +341,14 @@ document.addEventListener("change", async (e) => {
   }
 });
 
+// Drag regions move the window in the app (WKWebView keeps mouse events from the window).
+document.addEventListener("mousedown", (e) => {
+  if (!native || e.button !== 0 || e.detail > 1) return;
+  const zone = e.target.closest("[data-drag]");
+  if (!zone || e.target.closest("button, a, input, select, textarea")) return;
+  native.postMessage({ action: "drag" });
+});
+
 // The native shell calls this after it changed something it owns (login item).
 window.apNativeChanged = (state) => {
   window.AP_NATIVE = { ...(window.AP_NATIVE ?? {}), ...state };
