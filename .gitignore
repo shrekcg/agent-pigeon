@@ -1,0 +1,8 @@
+*.bun-build
+.DS_Store
+.dev-data/
+.playwright-mcp/
+.vmark/
+app/macos/.build/
+dist/
+node_modules/

@@ -1,0 +1,15 @@
+name: 功能建议
+description: 想接入新的 Agent 或渠道，或者想要一个新功能
+labels: [enhancement]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 你想在什么情况下用它，现在缺什么。
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 设想的做法

@@ -1,0 +1,32 @@
+name: 问题反馈
+description: 某个功能没按预期工作
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么，期望看到什么，实际看到了什么。
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: 涉及的 Agent
+      multiple: true
+      options: [PenguinHarness, Claude Code, Codex, Grok, DeepSeek Harness, Pi, Hermes, 与 Agent 无关]
+  - type: input
+    id: version
+    attributes:
+      label: Agent 信鸽版本
+      description: App「设置」页或 `agent-pigeon-engine version` 输出
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志
+      description: 「设置」页的日志，或 `~/Library/Application Support/AgentPigeon/logs/engine.log` 里相关的几行。贴之前请删掉 chat_id、会话 ID 和路径里的用户名。
+      render: text
