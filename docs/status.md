@@ -1,6 +1,6 @@
 # 项目状态
 
-> 更新于 2026-10-30，对应提交 `b19c74d`（v0.3.0，未发布）。每次合并改变下面任何一项的改动，都要同步更新本文。
+> 更新于 2026-10-30，对应提交 `a7c68f8`（v0.3.0，未发布）。每次合并改变下面任何一项的改动，都要同步更新本文。
 
 ## 阶段
 
@@ -72,4 +72,4 @@
 | 旧版 launchd | `~/Library/LaunchAgents/com.wcg.feishu-ht-relay.plist.retired`（已停用） |
 | 开发历史（不进仓库） | `~/Library/Application Support/AgentPigeon/dev-history/`：v1 交接文档和旧源码 |
 | 本地完整 git 历史 | 本地分支 `local-history`，不推送（早期提交里有本机数据） |
-| 当前绑定 | 4 个 Penguin 话题，2 个 Claude 话题（其中一个就是这个项目的开发会话） |
+| 当前绑定 | 4 个 Penguin 话题，2 个 Claude 话题（其中「[Claude] Agent 信鸽 开发」就是这个项目的开发会话） |
