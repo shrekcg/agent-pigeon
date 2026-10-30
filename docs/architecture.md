@@ -1,101 +1,79 @@
-# 架构说明
+# 技术架构
 
-本文写给想读代码、加 Agent 或加渠道的人。怎么用见仓库根目录的 README。
+本文是总览。各子系统的契约和细节见 [subsystems/](subsystems/README.md)，关键设计的取舍见 [decisions/](decisions/README.md)。
 
 ## 分层
 
 ```
-渠道（src/channels）  飞书已实现；钉钉、QQ、微信在规划中
-      ↕  inbound(消息) / view(渲染一个绑定的事件)
-中枢（src/hub）       绑定 = 渠道里的一个位置 ↔ 某个 Agent 的一个会话；路由、/ht 指令、去重、巡检
-      ↕  link.emit(运行事件) / send · abort · decide
-Agent（src/agents）   Penguin · Codex · Claude · Grok · DeepSeek · Pi · Hermes
+┌──────────────────────── Mac App（app/macos） ────────────────────────┐
+│  菜单栏 · 窗口（WKWebView 显示 app/web） · 登录项 · 托管引擎子进程        │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ 127.0.0.1:47821（界面 + /api）
+┌──────────────────────── 引擎（src/，Bun 编译成单个二进制） ─────────────┐
+│  渠道  src/channels    飞书（长连接 + REST + CardKit）· 钉钉/QQ/微信占位  │
+│           ↕ inbound / view                                           │
+│  中枢  src/hub         绑定 · 路由 · /ht 指令 · 去重 · 巡检             │
+│           ↕ link.emit(运行事件) / send · abort · decide               │
+│  Agent src/agents      Penguin(HTTP+SSE) · Claude/Codex/Grok/DSH/Pi    │
+│                        （无界面续跑 + JSON 流）· Hermes(Unix socket)    │
+│  API   src/api         控制台和 ht 命令背后的本地接口                  │
+│  Skill src/skills      把 feishu-topic 装进各 Agent                   │
+└──────────────────────────────────────────────────────────────────────┘
+数据：~/Library/Application Support/AgentPigeon（config、state、logs、inbox、workspaces）
 ```
 
-**绑定**（binding）是核心概念，结构为 `{ id, channel, agent, sessionId, cwd, title, address }`：
+## 核心概念
 
-- `address` 由渠道自己定义。飞书话题模式是 `{ threadId, rootMessageId }`，共享模式是 `{ anchorMessageId, shared: true }`。
-- `sessionId` 在命令行类 Agent 跑完第一轮之前是 `null`，由 Agent 输出里带回的 id 回写。
-
-**运行事件**是 Agent 适配器和渠道之间唯一的契约：
-
-```
-run_start · thinking · text_start · text_delta · tool_call · tool_result · message
-failure · stopped · run_end · session_id · title · approval · queued · user_text
-```
-
-完整说明见 `src/agents/base.js` 的头注释。
-
-## Mac App
-
-| 部分 | 位置 | 说明 |
+| 概念 | 含义 | 详见 |
 | --- | --- | --- |
-| 外壳 | `app/macos` | Swift 写的菜单栏 App（`LSUIElement`）。托管引擎子进程，崩溃后退避重启，退出码 75 表示「请求重启」。用 WKWebView 加载界面，用 SMAppService 管理登录项。 |
-| 引擎 | `src/main.js` | 用 `bun build --compile` 编成单个二进制 `Contents/MacOS/agent-pigeon-engine`。子命令 `serve` 运行引擎，`ht …` 是给 Skill 调用的控制命令。 |
-| 界面 | `app/web` | 纯 HTML/CSS/JS，由引擎在 `127.0.0.1:47821` 提供；写操作必须带 `X-AP-Admin: 1` 请求头。 |
-| 数据 | `~/Library/Application Support/AgentPigeon` | `config.json`、`state.json`、`logs/`、`inbox/`（渠道收到的附件）、`workspaces/<agent>`（从渠道新建的会话默认在这里运行）。 |
+| 绑定 binding | 渠道里的一个位置（话题或名片）和某个 Agent 的一个会话 | [hub.md](subsystems/hub.md) |
+| 运行事件 | Agent 适配器和渠道视图之间唯一的契约：`run_start … run_end` 等 15 种 | [agents.md](subsystems/agents.md) |
+| link | 适配器手里的那个绑定对象，会话 ID 回写后适配器能看到 | [agents.md](subsystems/agents.md) |
+| 视图 view | 渠道为每个绑定建的渲染器：过程卡、结论卡、回传文件 | [feishu-cards.md](subsystems/feishu-cards.md) |
+| 隔离方式 | `thread`（一个会话一个话题）或 `shared`（所有会话进同一个对话） | [feishu-channel.md](subsystems/feishu-channel.md) |
 
-打包脚本 `scripts/build-app.sh` 生成 `.app` 和 DMG。`scripts/bundle-engine.mjs` 负责改写依赖里的 `__dirname`：bundler 默认把它写死成构建机上的绝对路径，引擎运行时会去读那个路径，可能触发 macOS 的文件夹访问授权，导致进程卡在启动阶段。
+## 两条主路径
 
-## 各 Agent 的接入方式
+**渠道到 Agent**（用户在话题里发一条消息）：
 
-| Agent | 调用方式 | 会话 ID 环境变量 | 会话列表来源 |
-| --- | --- | --- | --- |
-| PenguinHarness | 本地 HTTP API + SSE 镜像（`server.lock` + `api-token`） | `PENGUIN_SESSION_ID` | API |
-| Codex | `codex exec [resume <id>] --json -`（提示词走 stdin） | `CODEX_THREAD_ID` | `~/.codex/state_*.sqlite` 的 `threads` 表 |
-| Claude Code | `claude -p --resume <id> --output-format stream-json --verbose --include-partial-messages` | `CLAUDE_CODE_SESSION_ID` | `~/.claude/projects/*/<id>.jsonl` |
-| Grok | `grok --prompt-file /dev/stdin --resume <id> --output-format streaming-json` | `GROK_SESSION_ID` | `~/.grok/sessions/*/<id>/summary.json` |
-| DeepSeek Harness | `dsh --profile headless --json [--session-id <id>] -`（在会话的 cwd 下运行） | `DSH_SESSION_ID` | `~/.dsh/session-flow/index-*.json` 和 `storages/session_projcache` |
-| Pi | `pi -p --mode json --session <id> -- [@图片] 提示词`（在会话的 cwd 下运行） | `PI_SESSION_ID` | `~/.pi/agent/sessions/*/*.jsonl` |
-| Hermes | Hermes Studio 的 agent bridge（`/tmp/hermes-agent-bridge.sock`：`chat` + 轮询 `get_output`） | 无（Skill 用 `latest`） | `~/.hermes/state.db` |
-
-命令行类 Agent 共享 `src/agents/cli.js`：
-
-- 每轮起一个子进程，进程启动发 `run_start`，退出发 `run_end`。
-- 运行中收到的消息排队，等本轮结束后作为下一轮发出；「停」会结束整个进程组。
-- 子进程只继承一个干净的环境，不带中继自己的会话变量。否则嵌套运行的 Claude Code 会被拒绝登录。
-- 默认无人值守：Codex 跳过审批和沙箱，Claude 用 `bypassPermissions`，Grok 用 `--always-approve`。可在 `config.json` 的 `agents.<id>` 里修改。
-
-**加一个 Agent**：
-1. 写一个适配器，继承 `AgentAdapter` 或 `CliAdapter`，实现 `listSessions / getSession / buildRun / parseLine`。
-2. 在 `src/agents/index.js` 登记。
-3. 在 `src/skills/install.js` 里写上它的 skills 目录和会话 ID 变量。
-
-## 渠道与隔离
-
-| 隔离方式 | 行为 | 路由 |
-| --- | --- | --- |
-| `thread`（按会话隔离，默认） | 每个会话一个飞书话题，名片首行是 `[Agent] 标题` | 话题的 thread_id |
-| `shared` | 所有会话进机器人单聊；每条输出带 `【[Agent] 标题】` 前缀，结论卡带会话名表头 | 优先看引用的是哪个会话的消息；没有引用就发给当前会话（`/ht-use` 切换，新开的会话自动成为当前会话） |
-
-流式过程卡、工具审批卡、收发图片和文件、结论卡是每个渠道的基础能力，不设开关。
-
-**加一个渠道**：在 `src/channels/<id>/` 下实现 `Channel` 契约（`start / open / createView / resolveBinding / reply / refresh / closed / ask`），在 `src/channels/index.js` 里给它的 `make` 赋值即可。
-
-## Skill
-
-模板在 `skill/feishu-topic/SKILL.md`。安装时按 Agent 填入 `--agent` 和会话 ID 变量，写进各 Agent 自己的 skills 目录：
-
-- Claude Code：`~/.claude/skills`
-- Codex：`~/.codex/skills`
-- Grok：`~/.grok/skills`
-- DeepSeek Harness：`~/.dsh/skills`
-- Pi：`~/.pi/agent/skills`
-- Hermes：`~/.hermes/skills`
-- PenguinHarness：每个 agent 的 `agent_state/skills`
-
-安装时如果目标位置已有手写的同名 Skill，先备份成 `SKILL.md.bak-before-bridge`。卸载只删带安装标记的文件。App 升级后，引擎启动时会自动更新已安装的副本。
-
-## 状态与迁移
-
-`state.json` 包含 `bindings / active / seen / sentTexts / openCards`。`src/core/paths.js` 的 `migrateLegacyHome()` 负责数据迁移：首次启动时，如果数据目录还不存在，就从旧版数据目录迁入配置和绑定，`src/core/store.js` 再把 v1 的状态格式升级成 v2。
-
-## 开发
-
-```bash
-npm ci
-npm test          # 适配器解析、状态迁移、指令解析、中枢路由、运行边界
-npm run dev       # 用 ./.dev-data 作为数据目录启动引擎，浏览器打开 http://127.0.0.1:47821/
+```
+飞书 im.message.receive_v1 → FeishuChannel#onMessage（过滤 chat、附件落盘）
+→ Hub.inbound（去重 → 指令？→ resolveBinding → 停止意图 / 插话或排队）
+→ adapter.send(link, parts, { mode })
 ```
 
-不接飞书也能自测：调用 `POST /api/_debug/event`（带 `X-AP-Admin: 1`）可以合成一条飞书消息。`tools/topicdump.js <thread_id>` 能读出飞书话题里实际显示的内容。
+**Agent 到渠道**（会话在跑）：
+
+```
+适配器（SSE 帧 / 子进程 stdout 每一行 / bridge 轮询）→ link.emit(运行事件)
+→ Hub#onAgentEvent（回写会话 ID、跟随标题、过滤回显）
+→ FeishuView.onEvent（run_start 建卡 → 逐字推送 → run_end 等静默后收尾 → 结论卡 → 回传文件）
+```
+
+## 进程与生命周期
+
+- 外壳启动引擎（`agent-pigeon-engine serve`）。引擎拿 pid 锁，从旧版目录迁移数据，读配置，建 Agent 和渠道，起本地 API，再恢复所有绑定。
+- 引擎退出码 75 表示请求重启。崩溃后外壳会退避重启，一分钟内超过 5 次就停止。
+- 引擎收到 SIGTERM，或者 App 退出导致 stdin 关闭时，会先把所有运行中的卡片收尾成静态卡再退出。
+
+## 代码规模（v0.3.0）
+
+约 7600 行，大头是这几块：
+
+| 部分 | 行数 |
+| --- | --- |
+| 飞书渠道 | 约 2000 |
+| Agent 适配器 | 约 1500 |
+| 中枢 | 约 650 |
+| 外壳 Swift | 约 400 |
+| 控制台界面 | 约 600 |
+| 测试 | 约 500，共 31 个用例 |
+
+## 安全边界
+
+见 [SECURITY.md](../SECURITY.md)：
+
+- 只处理配置里那一个对话的消息；
+- 本地 API 只监听 127.0.0.1，写操作要带自定义请求头；
+- 凭据只从配置文件或 PenguinHarness 数据库里读，不写到别处；
+- Agent 默认无人值守运行，可以按 Agent 收紧权限。

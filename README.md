@@ -121,7 +121,7 @@ Agent（src/agents）    每个 Agent 一个适配器，统一输出同一套运
 | 界面 `app/web` | 纯 HTML/CSS/JS，用系统自带的 WebKit 显示，没有用 Electron |
 | 数据 | `~/Library/Application Support/AgentPigeon`：配置、绑定、日志、附件 |
 
-整个 App 约 58MB。加 Agent、加渠道的方法见 [docs/architecture.md](docs/architecture.md)。
+整个 App 约 58MB。加 Agent、加渠道的方法见 [docs/subsystems/](docs/subsystems/README.md)。
 
 ## 安全
 
@@ -165,6 +165,18 @@ npm run dev
 - 命令行类 Agent 只同步从渠道发起的轮次，见上文「支持的 Agent」。
 - Hermes 需要 Hermes Studio 在运行。
 - 没装 PenguinHarness 时，飞书凭据要手动写进 `config.json`，App 里还没有填写凭据的界面。
+
+## 文档
+
+| 想了解 | 读 |
+| --- | --- |
+| 产品定位、场景、功能边界 | [docs/product.md](docs/product.md) |
+| 当前进度、已验证的能力、已知问题、待办 | [docs/status.md](docs/status.md) |
+| 技术架构总览 | [docs/architecture.md](docs/architecture.md) |
+| 各子系统的契约（Agent、中枢、飞书、卡片、外壳、Skill、配置） | [docs/subsystems/](docs/subsystems/README.md) |
+| 关键设计为什么这样定 | [docs/decisions/](docs/decisions/README.md) |
+| 开发、打包、排障 | [docs/development.md](docs/development.md) |
+| 踩过的坑 | [LESSONS.md](LESSONS.md) |
 
 ## 参与
 

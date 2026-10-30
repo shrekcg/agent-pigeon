@@ -180,7 +180,9 @@ async function openSession(hub, body) {
   // A session not written to disk yet (a brand-new conversation) is still bindable: the
   // caller knows its id and working directory.
   if (!session) session = { sessionId, title: null, cwd: body.cwd ?? null, model: null };
-  if (body.cwd && !session.cwd) session.cwd = body.cwd;
+  // The caller's own folder wins when it exists: a session file records the folder the
+  // session started in, which a moved or forked session no longer runs in.
+  if (body.cwd && fs.existsSync(body.cwd)) session.cwd = body.cwd;
   const title = typeof body.title === "string" && body.title.trim() !== "" ? body.title.trim() : session.title ?? `会话 ${sessionId.slice(-8)}`;
   const { binding, already } = await hub.bind(channel, { agent, session, title });
   return [200, { bindingId: binding.id, title: binding.title, display: displayTitle(agent, binding.title), already, channel: channel.label }];
